@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
 🌤️ Telegram Ob-havo Bot
-Kerakli kutubxonalar:
-    pip install python-telegram-bot requests
+Kerakli kutubxonalar: pip install -r requirements.txt
 
 Sozlash:
-    1. @BotFather dan BOT_TOKEN oling
-    2. openweathermap.org dan bepul WEATHER_API_KEY oling
-    3. Quyidagi TOKEN va API_KEY ni o'zingiznikiga almashtiring
+    1. .env.example ni .env ga nusxalang
+    2. .env da BOT_TOKEN va WEATHER_API_KEY ni kiriting
+    3. @BotFather dan BOT_TOKEN, openweathermap.org dan WEATHER_API_KEY oling
 """
 
+import os
 import logging
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 from datetime import datetime
 from telegram import (
     Update,
@@ -27,12 +30,19 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     filters,
+    PicklePersistence,
 )
 
 # ─── SOZLAMALAR ───────────────────────────────────────────────────────────────
-BOT_TOKEN = "8259707562:AAFMtypXdU_0nZHvN1mb3BpQPRUcY5OuW-g"          # @BotFather dan olgan tokeningiz
-WEATHER_API_KEY = "702d3ca5322f7b2a3776940e8f58e3b3"  # openweathermap.org API kaliti
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 BASE_URL = "https://api.openweathermap.org/data/2.5"
+
+if not BOT_TOKEN or not WEATHER_API_KEY:
+    raise SystemExit(
+        "❌ .env faylida BOT_TOKEN va WEATHER_API_KEY berilishi shart. "
+        ".env.example ni .env ga nusxalab qiymatlarni kiriting."
+    )
 
 # ─── LOGGING ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -190,9 +200,13 @@ def weather_type_keyboard(lat: float, lon: float) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🌤️ Hozir", callback_data=f"cur|{lat}|{lon}"),
             InlineKeyboardButton("📅 5 kun", callback_data=f"fore|{lat}|{lon}"),
         ],
-        [
-            InlineKeyboardButton("🔙 Orqaga", callback_data="back|main"),
-        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def saved_location_inline_keyboard(location_name: str) -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(f"📍 Saqlangan: {location_name}", callback_data="saved_loc")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -260,14 +274,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "📍 Joylashuvim orqali":
-        keyboard = [
-            [KeyboardButton("📍 Joylashuvni yuborish", request_location=True)],
-            [KeyboardButton("🔙 Orqaga")],
-        ]
-        markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+        last_lat = context.user_data.get("last_lat")
+        last_lon = context.user_data.get("last_lon")
+        last_name = context.user_data.get("last_location_name", "Joylashuv")
+        keyboard_reply = [[KeyboardButton("📍 Joylashuvni yuborish", request_location=True)]]
+        markup_reply = ReplyKeyboardMarkup(keyboard_reply, resize_keyboard=True, one_time_keyboard=True)
+        if last_lat is not None and last_lon is not None:
+            await update.message.reply_text(
+                "📍 Joylashuvingizni yuboring yoki saqlangan joylashuvdan foydalaning:",
+                reply_markup=markup_reply,
+            )
+            await update.message.reply_text(
+                "Saqlangan joylashuvingiz:",
+                reply_markup=saved_location_inline_keyboard(last_name),
+            )
+            return
         await update.message.reply_text(
             "📍 Joylashuvingizni yuboring:",
-            reply_markup=markup,
+            reply_markup=markup_reply,
         )
         return
 
@@ -309,8 +333,13 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     location = update.message.location
     lat, lon = location.latitude, location.longitude
 
+    context.user_data["last_lat"] = lat
+    context.user_data["last_lon"] = lon
+    data = fetch_current(lat=lat, lon=lon)
+    context.user_data["last_location_name"] = data["name"] if data else "Joylashuv"
+
     await update.message.reply_text(
-        "📍 Joylashuvingiz topildi! Qaysi ma'lumot kerak?",
+        "📍 Joylashuvingiz saqlandi! Qaysi ma'lumot kerak?",
         reply_markup=weather_type_keyboard(lat, lon),
     )
 
@@ -322,7 +351,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split("|")
     action = parts[0]
 
-    # Orqaga tugmasi
+    if action == "saved_loc":
+        last_lat = context.user_data.get("last_lat")
+        last_lon = context.user_data.get("last_lon")
+        if last_lat is not None and last_lon is not None:
+            await query.edit_message_text(
+                "Qaysi ma'lumot kerak?",
+                reply_markup=weather_type_keyboard(last_lat, last_lon),
+            )
+        return
+
     if action == "back":
         await query.edit_message_text(
             "🏠 Asosiy menyuga qaytdingiz.\nQuyidagi tugmalardan foydalaning:",
@@ -336,7 +374,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data:
             keyboard = [
                 [InlineKeyboardButton("📅 5 kunlik prognoz", callback_data=f"fore|{lat}|{lon}")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
             ]
             await query.edit_message_text(
                 format_current_weather(data),
@@ -350,7 +387,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data:
             keyboard = [
                 [InlineKeyboardButton("🌤️ Hozirgi ob-havo", callback_data=f"cur|{lat}|{lon}")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
             ]
             await query.edit_message_text(
                 format_forecast(data),
@@ -374,7 +410,6 @@ async def fetch_and_send(
         if data:
             keyboard = [
                 [InlineKeyboardButton("🌤️ Hozirgi ob-havo", callback_data=f"cur|{data['city']['coord']['lat']}|{data['city']['coord']['lon']}")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
             ]
             await msg.edit_text(format_forecast(data), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
@@ -389,7 +424,6 @@ async def fetch_and_send(
             text = format_current_weather(data)
             keyboard = [
                 [InlineKeyboardButton("📅 5 kunlik prognozni ko'rish", callback_data=f"fore|{data['coord']['lat']}|{data['coord']['lon']}")],
-                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
             ]
             markup = InlineKeyboardMarkup(keyboard)
             await msg.edit_text(text, parse_mode="Markdown", reply_markup=markup)
@@ -406,7 +440,8 @@ async def fetch_and_send(
 def main():
     print("🤖 Ob-havo bot ishga tushmoqda...")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    persistence = PicklePersistence(filepath="weather_bot_data.pickle")
+    app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
 
     # Handlerlar
     app.add_handler(CommandHandler("start", start))
