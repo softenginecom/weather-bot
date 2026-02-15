@@ -189,7 +189,10 @@ def weather_type_keyboard(lat: float, lon: float) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("🌤️ Hozir", callback_data=f"cur|{lat}|{lon}"),
             InlineKeyboardButton("📅 5 kun", callback_data=f"fore|{lat}|{lon}"),
-        ]
+        ],
+        [
+            InlineKeyboardButton("🔙 Orqaga", callback_data="back|main"),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -230,18 +233,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Tugma bosilganda
     if text == "🌤️ Hozirgi ob-havo":
         context.user_data["mode"] = "current"
-        await update.message.reply_text(
-            "🏙️ Shahar nomini kiriting:\n_(Masalan: Toshkent, Samarqand, Moscow)_",
-            parse_mode="Markdown",
-        )
+        last_city = context.user_data.get("last_city")
+        if last_city:
+            msg = (
+                f"🏙️ Shahar nomini kiriting:\n"
+                f"_(Masalan: Toshkent, Samarqand, Moscow)_\n\n"
+                f"💾 Oxirgi shahar: *{last_city}*"
+            )
+        else:
+            msg = "🏙️ Shahar nomini kiriting:\n_(Masalan: Toshkent, Samarqand, Moscow)_"
+        await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
     if text == "📅 5 kunlik prognoz":
         context.user_data["mode"] = "forecast"
-        await update.message.reply_text(
-            "🏙️ Shahar nomini kiriting:\n_(Masalan: Toshkent, Samarqand, Moscow)_",
-            parse_mode="Markdown",
-        )
+        last_city = context.user_data.get("last_city")
+        if last_city:
+            msg = (
+                f"🏙️ Shahar nomini kiriting:\n"
+                f"_(Masalan: Toshkent, Samarqand, Moscow)_\n\n"
+                f"💾 Oxirgi shahar: *{last_city}*"
+            )
+        else:
+            msg = "🏙️ Shahar nomini kiriting:\n_(Masalan: Toshkent, Samarqand, Moscow)_"
+        await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
     if text == "📍 Joylashuvim orqali":
@@ -256,12 +271,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if text == "🔙 Orqaga":
+        await update.message.reply_text(
+            "🏠 Asosiy menyu:",
+            reply_markup=main_keyboard(),
+        )
+        context.user_data.clear()
+        return
+
     if text == "🏙️ Shahar qidirish":
         context.user_data["mode"] = "search"
-        await update.message.reply_text(
-            "🔍 Qaysi shaharni qidiramiz?\n_(Masalan: Buxoro, New York, Tokyo)_",
-            parse_mode="Markdown",
-        )
+        last_city = context.user_data.get("last_city")
+        if last_city:
+            msg = (
+                f"🔍 Qaysi shaharni qidiramiz?\n"
+                f"_(Masalan: Buxoro, New York, Tokyo)_\n\n"
+                f"💾 Oxirgi shahar: *{last_city}*"
+            )
+        else:
+            msg = "🔍 Qaysi shaharni qidiramiz?\n_(Masalan: Buxoro, New York, Tokyo)_"
+        await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
     if text == "ℹ️ Yordam":
@@ -270,6 +299,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Shahar nomi kiritildi — ob-havo ko'rsatish
     mode = context.user_data.get("mode", "current")
+    # Shahar nomini eslab qoling
+    context.user_data["last_city"] = text
     await fetch_and_send(update, context, city=text, mode=mode)
     context.user_data["mode"] = "current"  # reset
 
@@ -290,23 +321,41 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     parts = query.data.split("|")
     action = parts[0]
+
+    # Orqaga tugmasi
+    if action == "back":
+        await query.edit_message_text(
+            "🏠 Asosiy menyuga qaytdingiz.\nQuyidagi tugmalardan foydalaning:",
+        )
+        return
+
     lat, lon = float(parts[1]), float(parts[2])
 
     if action == "cur":
         data = fetch_current(lat=lat, lon=lon)
         if data:
+            keyboard = [
+                [InlineKeyboardButton("📅 5 kunlik prognoz", callback_data=f"fore|{lat}|{lon}")],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
+            ]
             await query.edit_message_text(
                 format_current_weather(data),
                 parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
             )
         else:
             await query.edit_message_text("❌ Ma'lumot olishda xatolik yuz berdi.")
     elif action == "fore":
         data = fetch_forecast(lat=lat, lon=lon)
         if data:
+            keyboard = [
+                [InlineKeyboardButton("🌤️ Hozirgi ob-havo", callback_data=f"cur|{lat}|{lon}")],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
+            ]
             await query.edit_message_text(
                 format_forecast(data),
                 parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
             )
         else:
             await query.edit_message_text("❌ Ma'lumot olishda xatolik yuz berdi.")
@@ -323,7 +372,11 @@ async def fetch_and_send(
     if mode == "forecast":
         data = fetch_forecast(city=city)
         if data:
-            await msg.edit_text(format_forecast(data), parse_mode="Markdown")
+            keyboard = [
+                [InlineKeyboardButton("🌤️ Hozirgi ob-havo", callback_data=f"cur|{data['city']['coord']['lat']}|{data['city']['coord']['lon']}")],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
+            ]
+            await msg.edit_text(format_forecast(data), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await msg.edit_text(
                 f"❌ *{city}* shahri topilmadi.\n"
@@ -334,13 +387,10 @@ async def fetch_and_send(
         data = fetch_current(city=city)
         if data:
             text = format_current_weather(data)
-            # Prognoz tugmasi
-            keyboard = [[
-                InlineKeyboardButton(
-                    "📅 5 kunlik prognozni ko'rish",
-                    callback_data=f"fore|{data['coord']['lat']}|{data['coord']['lon']}"
-                )
-            ]]
+            keyboard = [
+                [InlineKeyboardButton("📅 5 kunlik prognozni ko'rish", callback_data=f"fore|{data['coord']['lat']}|{data['coord']['lon']}")],
+                [InlineKeyboardButton("🔙 Orqaga", callback_data="back|main")],
+            ]
             markup = InlineKeyboardMarkup(keyboard)
             await msg.edit_text(text, parse_mode="Markdown", reply_markup=markup)
         else:
