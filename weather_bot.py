@@ -245,7 +245,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "📍 Joylashuvim orqali":
-        keyboard = [[KeyboardButton("📍 Joylashuvni yuborish", request_location=True)]]
+        keyboard = [
+            [KeyboardButton("📍 Joylashuvni yuborish", request_location=True)],
+            [KeyboardButton("🔙 Orqaga")],
+        ]
         markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
         await update.message.reply_text(
             "📍 Joylashuvingizni yuboring:",
